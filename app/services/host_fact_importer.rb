@@ -47,6 +47,7 @@ class HostFactImporter
 
     # taxonomy must be set before populate_fields_from_facts call
     set_host_taxonomies(facts)
+    set_host_owner(facts)
 
     skipping_orchestration do
       unless host.build?
@@ -88,6 +89,68 @@ class HostFactImporter
       end
       taxonomy_class.current = host.send(taxonomy)
     end
+  end
+
+  # Assign an existing user or user group. Do not create one when the fact
+  # does not match, and leave the current owner alone in that case.
+  def set_host_owner(facts)
+    fact_name = Setting[:owner_fact]
+    return if fact_name.blank?
+
+    value = owner_fact_value(facts, fact_name)
+    return if value.blank? || value.is_a?(Hash) || value.is_a?(Array)
+
+    owner = existing_owner(value)
+    host.owner = owner if owner
+  end
+
+  def owner_fact_value(facts, fact_name)
+    name = fact_name.to_s
+    return if name.blank?
+    return facts[name] if facts.key?(name) && !facts[name].is_a?(Hash)
+
+    current = facts
+    name.split(FactName::SEPARATOR).each do |part|
+      return unless current.is_a?(Hash)
+
+      key = if current.key?(part)
+              part
+            elsif current.key?(part.to_sym)
+              part.to_sym
+            end
+      return if key.nil?
+
+      current = current[key]
+    end
+    current
+  end
+
+  def existing_owner(value)
+    text = value.to_s.strip
+    return if text.blank?
+
+    if (match = text.match(/\A(User|Usergroup)\s*:\s*(.+)\z/i))
+      type = match[1].casecmp('user').zero? ? 'User' : 'Usergroup'
+      return owner_by_type(type, match[2].strip)
+    end
+
+    user_from_login(text) || Usergroup.unscoped.find_by(:name => text)
+  end
+
+  def owner_by_type(type, name)
+    case type
+    when 'User'
+      user_from_login(name)
+    when 'Usergroup'
+      Usergroup.unscoped.find_by(:name => name)
+    end
+  end
+
+  def user_from_login(login)
+    user = User.unscoped.find_by_login(login)
+    return if user.nil? || user.hidden?
+
+    user
   end
 
   def skipping_orchestration(&block)

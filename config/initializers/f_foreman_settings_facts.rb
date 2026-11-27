@@ -56,6 +56,11 @@ Foreman::SettingManager.define(:foreman) do
       description: N_("Hosts created from facts will be placed in the organization this fact dictates. The content of this fact should be the full label of the organization."),
       default: 'foreman_organization',
       full_name: N_('Organization fact'))
+    setting('owner_fact',
+      type: :string,
+      description: N_("Hosts created from facts will be assigned to the existing owner named by this fact. The value is a user login, a user group name, or an explicit 'User:login' / 'Usergroup:name'. Unknown names are ignored and no owner is created. Structured and trusted facts use a '::' path, for example trusted::extensions::pp_owner."),
+      default: 'foreman_owner',
+      full_name: N_('Owner fact'))
     setting('default_location',
       type: :string,
       description: N_("Hosts created from facts will be placed in this location if no location fact was sent"),

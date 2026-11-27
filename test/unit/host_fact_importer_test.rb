@@ -362,6 +362,84 @@ class HostFactImporterTest < ActiveSupport::TestCase
     assert_equal hostgroup, host.hostgroup
   end
 
+  test 'assigns an existing user from the foreman_owner fact' do
+    user = FactoryBot.create(:user)
+    host = Host.import_host('owner-from-fact.example.com')
+    assert import_owner_facts(host, :foreman_owner => user.login)
+    assert_equal user, host.reload.owner
+  end
+
+  test 'assigns an existing user group when no user has that login' do
+    group = FactoryBot.create(:usergroup)
+    host = Host.import_host('group-owner.example.com')
+    assert import_owner_facts(host, :foreman_owner => group.name)
+    assert_equal group, host.reload.owner
+  end
+
+  test 'explicit Usergroup prefix assigns that user group' do
+    group = FactoryBot.create(:usergroup)
+    host = Host.import_host('explicit-group-owner.example.com')
+    assert import_owner_facts(host, :foreman_owner => "Usergroup:#{group.name}")
+    assert_equal group, host.reload.owner
+  end
+
+  test 'explicit User prefix assigns that user' do
+    user = FactoryBot.create(:user)
+    host = Host.import_host('explicit-user-owner.example.com')
+    assert import_owner_facts(host, :foreman_owner => "User:#{user.login}")
+    assert_equal user, host.reload.owner
+  end
+
+  test 'assigns an owner from a nested trusted fact path' do
+    user = FactoryBot.create(:user)
+    previous = Setting[:owner_fact]
+    Setting[:owner_fact] = 'trusted::extensions::pp_owner'
+    host = Host.import_host('trusted-owner.example.com')
+    assert import_owner_facts(host, :trusted => { :extensions => { :pp_owner => user.login } })
+    assert_equal user, host.reload.owner
+  ensure
+    Setting[:owner_fact] = previous
+  end
+
+  test 'assigns an owner from a flattened trusted fact' do
+    user = FactoryBot.create(:user)
+    previous = Setting[:owner_fact]
+    Setting[:owner_fact] = 'trusted::extensions::pp_owner'
+    host = Host.import_host('flat-trusted-owner.example.com')
+    assert import_owner_facts(host, 'trusted::extensions::pp_owner' => user.login)
+    assert_equal user, host.reload.owner
+  ensure
+    Setting[:owner_fact] = previous
+  end
+
+  test 'updates the owner when a later fact upload names another existing owner' do
+    first = FactoryBot.create(:user)
+    second = FactoryBot.create(:user)
+    host = FactoryBot.create(:host, :owner => first)
+    assert import_owner_facts(host, :foreman_owner => second.login)
+    assert_equal second, host.reload.owner
+  end
+
+  test 'leaves the current owner unchanged when the fact does not match an existing owner' do
+    user = FactoryBot.create(:user)
+    host = FactoryBot.create(:host, :owner => user)
+    assert import_owner_facts(host, :foreman_owner => 'missing-owner')
+    assert_equal user, host.reload.owner
+    assert_nil User.find_by_login('missing-owner')
+  end
+
+  test 'does not change the owner when owner_fact is blank' do
+    user = FactoryBot.create(:user)
+    other = FactoryBot.create(:user)
+    host = FactoryBot.create(:host, :owner => user)
+    previous = Setting[:owner_fact]
+    Setting[:owner_fact] = ''
+    assert import_owner_facts(host, :foreman_owner => other.login)
+    assert_equal user, host.reload.owner
+  ensure
+    Setting[:owner_fact] = previous
+  end
+
   describe 'a host with primary interface on a bond' do
     let(:raw_facts) { read_json_fixture('facts/facts_with_primary_interface_bond.json').merge(_type: 'puppet') }
     let(:hostname) { 'host01.example.com' }
@@ -407,5 +485,14 @@ class HostFactImporterTest < ActiveSupport::TestCase
         HostFactImporter.new(host).import_facts({operatingsystemrelease: '6.7', operatingsystem: 'CentOS'})
       end
     end
+  end
+
+  private
+
+  def import_owner_facts(host, extra)
+    HostFactImporter.new(host).import_facts({
+      :operatingsystem => 'CentOS',
+      :operatingsystemrelease => '7',
+    }.merge(extra))
   end
 end
